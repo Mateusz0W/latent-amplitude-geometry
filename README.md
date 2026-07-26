@@ -1,0 +1,1 @@
+# Analysis of scattering amplitude geometry in latent space using generative models
