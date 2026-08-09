@@ -27,6 +27,7 @@ class VAE(nn.Module):
 
         return x_recon, mu, logvar
 
+    @staticmethod
     def vae_loss(x_recon, x, mu, logvar):
         recon_loss = F.mse_loss(x_recon, x, reduction='mean')
     
