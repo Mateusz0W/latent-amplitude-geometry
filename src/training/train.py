@@ -127,3 +127,7 @@ if __name__ == "__main__":
 
     if early_stopping.best_model is not None:
         model.load_state_dict(early_stopping.best_model)
+        model_path = _SRC_ROOT.parent / "models" / "best_vae.pt"
+        torch.save(model.state_dict(), model_path)
+
+        print(f"Best model saved to: {model_path}")
