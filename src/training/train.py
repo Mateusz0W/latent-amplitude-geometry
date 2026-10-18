@@ -67,6 +67,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = np.load(_SRC_ROOT.parent / "data" / "amplitudes.npz")
     X = np.asarray(data["X"], dtype=np.float32)
+    y_class = np.asarray(data["y_class"])
+    s_grid = np.asarray(data["s_grid"])
 
     train_loader, val_loader, test_loader = split_data(X)
 
@@ -76,10 +78,12 @@ if __name__ == "__main__":
         latent_dim=16
     ).to(device)
 
-    early_stopping = EarlyStopping()
+    early_stopping = EarlyStopping(patience=7)
 
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    num_epochs = 50
+    num_epochs = 500
+    train_losses = []
+    val_losses = []
 
     for epoch in range(num_epochs):
         model.train()
@@ -120,6 +124,8 @@ if __name__ == "__main__":
             f"Val Loss: {val_loss:.4f} "
             f"(Recon: {val_recon:.4f}, KL: {val_kl:.4f})"
         )
+        train_losses.append(train_loss)
+        val_losses.append(val_loss)
 
         if early_stopping.early_stop:
             print("Early Stopping Triggerd")
@@ -129,5 +135,15 @@ if __name__ == "__main__":
         model.load_state_dict(early_stopping.best_model)
         model_path = _SRC_ROOT.parent / "src" / "models" / "best_vae.pt"
         torch.save(model.state_dict(), model_path)
-
         print(f"Best model saved to: {model_path}")
+
+        from analysis.latent import plot_loss_curves, plot_reconstructions
+
+        results_dir = _SRC_ROOT.parent / "results" / "vae"
+        results_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(model.state_dict(), results_dir / "best_vae.pt")
+        plot_loss_curves(train_losses, val_losses, results_dir / "loss_curves.png")
+        plot_reconstructions(
+            model, X, s_grid, y_class, results_dir / "reconstructions.png"
+        )
+        print(f"Zapisano figury VAE: {results_dir}")

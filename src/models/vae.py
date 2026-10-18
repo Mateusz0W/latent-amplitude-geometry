@@ -11,20 +11,24 @@ class VAE(nn.Module):
         self.fc_logvar = nn.Linear(hidden_dim[-1], latent_dim)
         self.decoder = self._build_decoder(latent_dim, hidden_dim, input_dim, decoder_activation)
 
+    def encode(self, x):
+        h = self.encoder(x)
+        mu = self.fc_mu(h)
+        logvar = self.fc_logvar(h)
+        return mu, logvar
+
+    def decode(self, z):
+        return self.decoder(z)
+
     def reparameterize(self, logvar, mu):
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         return mu + eps * std
 
     def forward(self, x):
-        h = self.encoder(x)
-        mu = self.fc_mu(h)
-        logvar = self.fc_logvar(h)
-
+        mu, logvar = self.encode(x)
         z = self.reparameterize(logvar, mu)
-
-        x_recon = self.decoder(z)
-
+        x_recon = self.decode(z)
         return x_recon, mu, logvar
 
     @staticmethod
