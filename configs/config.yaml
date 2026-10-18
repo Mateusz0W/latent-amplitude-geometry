@@ -1,18 +1,46 @@
 seed: 42
 m_pi: 0.13957
-s_max: 1.5
-n_points: 64
-n_samples_per_class: 400
+s_max: 2.0
+n_points: 128
+
+# Independent resonance configurations; each emits K, BW, Mix(λ), optional N/D
+n_physics: 1000
+
+n_res_options: [1, 2]
+n_res_probs: [0.5, 0.5]
+
+# Mix λ values (0 and 1 are pure K-matrix / Breit-Wigner)
+lambda_grid: [0.1, 0.25, 0.5, 0.75, 0.9]
+
+include_nd: true
 
 mass_range:
   min: 0.5
-  max: 1.2
+  max: 1.4
 coupling_range:
   min: 0.1
   max: 0.8
 width_range:
   min: 0.05
   max: 0.25
+background_range:
+  min: -0.3
+  max: 0.3
+# Mild linear term for N/D so it differs from constant-background K-matrix
+nd_slope_range:
+  min: -0.15
+  max: 0.15
+
+# Reject samples with NaN/Inf or max|T| above this
+max_abs_t: 50.0
+
+# none | rms | max_abs  (fit on train split only, applied to all)
+normalization: rms
+
+split:
+  train: 0.8
+  val: 0.1
+  test: 0.1
 
 vae:
   latent_dim: 8
