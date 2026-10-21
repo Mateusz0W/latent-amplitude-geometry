@@ -16,15 +16,10 @@ if str(_SRC_ROOT) not in sys.path:
 from amplitudes.breit_wigner import generate_breit_wigner
 from amplitudes.kinematics import get_grid, get_phase_space, t_to_vector
 from amplitudes.kmatrix import generate_kmatrix
-from amplitudes.mix import generate_mix
-from amplitudes.nd_method import generate_nd
 from amplitudes.unitarity import unitarity_violation
 
-# Formalism labels (stable indices for y_class)
 CLASS_KMATRIX = 0
 CLASS_BW = 1
-CLASS_MIX = 2
-CLASS_ND = 3
 
 SPLIT_TRAIN = 0
 SPLIT_VAL = 1
@@ -36,10 +31,8 @@ SPLIT_NAMES = ("train", "val", "test")
 class PhysicsConfig:
     physics_id: int
     n_res: int
-    poles: list[tuple[float, float]]
-    resonances: list[tuple[float, float, float]]
-    background: float
-    nd_slope: float
+    poles: list[tuple[float, float]]  # (M, g) for K-matrix
+    resonances: list[tuple[float, float]]  # (M, Gamma) for Breit-Wigner
 
 
 class Generator:
@@ -51,10 +44,7 @@ class Generator:
             self.config = yaml.safe_load(file)
 
         np.random.seed(int(self.config["seed"]))
-        self.include_nd = bool(self.config.get("include_nd", True))
-        self.classes_names = ["K-matrix", "Breit-Wigner", "Mix"]
-        if self.include_nd:
-            self.classes_names.append("N/D")
+        self.classes_names = ["K-matrix", "Breit-Wigner"]
 
         self.X: list[np.ndarray] = []
         self.y_class: list[int] = []
@@ -63,8 +53,6 @@ class Generator:
         self.y_unitarity: list[float] = []
         self.physics_id: list[int] = []
         self.split: list[int] = []
-        self.background: list[float] = []
-        self.nd_slope: list[float] = []
         self.masses: list[np.ndarray] = []
         self.couplings: list[np.ndarray] = []
         self.widths: list[np.ndarray] = []
@@ -80,7 +68,6 @@ class Generator:
         cfg = self.config
         m_min = float(cfg["mass_range"]["min"])
         m_max = float(cfg["mass_range"]["max"])
-        # Pole at s = m² must lie on the energy grid (with margin)
         if self.s is not None:
             margin = 0.02
             m_min = max(m_min, float(np.sqrt(max(self.s[0] + margin, 0.0))))
@@ -100,15 +87,13 @@ class Generator:
 
     def _resonances_from_poles(
         self, poles: list[tuple[float, float]]
-    ) -> list[tuple[float, float, float]]:
+    ) -> list[tuple[float, float]]:
+        """Same masses as K-matrix poles; independent widths for BW."""
         cfg = self.config
         return [
             (
                 mass,
                 float(np.random.uniform(cfg["width_range"]["min"], cfg["width_range"]["max"])),
-                float(
-                    np.random.uniform(cfg["coupling_range"]["min"], cfg["coupling_range"]["max"])
-                ),
             )
             for mass, _ in poles
         ]
@@ -126,17 +111,11 @@ class Generator:
 
         poles = self._sample_poles(n_res)
         resonances = self._resonances_from_poles(poles)
-        bg_cfg = cfg.get("background_range", {"min": 0.0, "max": 0.0})
-        slope_cfg = cfg.get("nd_slope_range", {"min": 0.0, "max": 0.0})
-        background = float(np.random.uniform(bg_cfg["min"], bg_cfg["max"]))
-        nd_slope = float(np.random.uniform(slope_cfg["min"], slope_cfg["max"]))
         return PhysicsConfig(
             physics_id=physics_id,
             n_res=n_res,
             poles=poles,
             resonances=resonances,
-            background=background,
-            nd_slope=nd_slope,
         )
 
     def _is_valid_amplitude(self, t: np.ndarray) -> bool:
@@ -162,18 +141,16 @@ class Generator:
         for i, (m, g) in enumerate(phys.poles):
             masses[i] = m
             couplings[i] = g
-        for i, (_m, gamma, _c) in enumerate(phys.resonances):
+        for i, (_m, gamma) in enumerate(phys.resonances):
             widths[i] = gamma
 
         self.X.append(t_to_vector(t))
         self.y_class.append(class_id)
         self.y_lambda.append(float(lam))
         self.y_n_res.append(int(phys.n_res))
-        self.y_unitarity.append(float(unitarity_violation(t, self.rho)))
+        self.y_unitarity.append(float(unitarity_violation(t, rho=None)))
         self.physics_id.append(int(phys.physics_id))
         self.split.append(int(split_id))
-        self.background.append(float(phys.background))
-        self.nd_slope.append(float(phys.nd_slope) if class_id == CLASS_ND else 0.0)
         self.masses.append(masses)
         self.couplings.append(couplings)
         self.widths.append(widths)
@@ -194,7 +171,6 @@ class Generator:
 
         n_train = int(n_physics * train_f)
         n_val = int(n_physics * val_f)
-        # remainder → test (avoids dropping samples)
         mapping: dict[int, int] = {}
         for i, pid in enumerate(ids):
             if i < n_train:
@@ -213,41 +189,20 @@ class Generator:
         self.y_unitarity = self.y_unitarity[:size]
         self.physics_id = self.physics_id[:size]
         self.split = self.split[:size]
-        self.background = self.background[:size]
-        self.nd_slope = self.nd_slope[:size]
         self.masses = self.masses[:size]
         self.couplings = self.couplings[:size]
         self.widths = self.widths[:size]
 
     def _emit_physics(self, phys: PhysicsConfig, split_id: int) -> bool:
-        """Emit full bundle K + BW + Mix(λ) + optional N/D. Returns True if complete."""
-        lambda_grid = [
-            float(lam)
-            for lam in self.config.get("lambda_grid", [0.25, 0.5, 0.75])
-            if 0.0 < float(lam) < 1.0
-        ]
-        expected = 2 + len(lambda_grid) + (1 if self.include_nd else 0)
+        """Emit K-matrix + Breit-Wigner for one physics config."""
+        expected = 2
         start = len(self.X)
 
-        t_k = generate_kmatrix(self.s, self.rho, phys.poles, background=phys.background)
+        t_k = generate_kmatrix(self.s, phys.poles)
         t_bw = generate_breit_wigner(self.s, phys.resonances)
 
         ok = self._append_sample(t_k, CLASS_KMATRIX, 0.0, phys, split_id)
         ok = self._append_sample(t_bw, CLASS_BW, 1.0, phys, split_id) and ok
-
-        for lam in lambda_grid:
-            t_mix = generate_mix(t_k, t_bw, lam)
-            ok = self._append_sample(t_mix, CLASS_MIX, lam, phys, split_id) and ok
-
-        if self.include_nd:
-            t_nd = generate_nd(
-                self.s,
-                self.rho,
-                phys.poles,
-                background=phys.background,
-                slope=phys.nd_slope,
-            )
-            ok = self._append_sample(t_nd, CLASS_ND, 0.0, phys, split_id) and ok
 
         if not ok or (len(self.X) - start) != expected:
             self._rollback_to(start)
@@ -281,7 +236,6 @@ class Generator:
 
     def _build_sanity_report(self) -> dict:
         y_class = np.asarray(self.y_class)
-        y_lambda = np.asarray(self.y_lambda)
         y_unitarity = np.asarray(self.y_unitarity)
         y_n_res = np.asarray(self.y_n_res)
         split = np.asarray(self.split)
@@ -294,12 +248,10 @@ class Generator:
             "n_points": int(self.config["n_points"]),
             "norm_scale": float(self.norm_scale),
             "normalization": str(self.config.get("normalization", "none")),
-            "include_nd": self.include_nd,
             "class_counts": {},
             "split_counts": {},
             "n_res_counts": {},
             "unitarity_by_class": {},
-            "unitarity_by_lambda": {},
             "checks": {},
         }
 
@@ -318,32 +270,12 @@ class Generator:
         for n in np.unique(y_n_res):
             report["n_res_counts"][str(int(n))] = int(np.sum(y_n_res == n))
 
-        for lam in sorted(set(float(x) for x in y_lambda)):
-            mask = np.isclose(y_lambda, lam)
-            if np.any(mask):
-                report["unitarity_by_lambda"][f"{lam:.2f}"] = {
-                    "mean": float(np.mean(y_unitarity[mask])),
-                    "median": float(np.median(y_unitarity[mask])),
-                    "n": int(np.sum(mask)),
-                }
-
         k_mean = report["unitarity_by_class"].get("K-matrix", {}).get("mean", np.nan)
         bw_mean = report["unitarity_by_class"].get("Breit-Wigner", {}).get("mean", np.nan)
-        mix_lams = sorted(
-            float(k)
-            for k in report["unitarity_by_lambda"]
-            if 0.0 < float(k) < 1.0
-        )
-        mix_means = [
-            report["unitarity_by_lambda"][f"{lam:.2f}"]["mean"] for lam in mix_lams
-        ]
 
         report["checks"] = {
             "kmatrix_near_unitary": bool(np.isfinite(k_mean) and k_mean < 1e-2),
             "bw_violates_unitarity": bool(np.isfinite(bw_mean) and bw_mean > 1e-2),
-            "unitarity_grows_with_lambda": bool(
-                len(mix_means) >= 2 and all(a <= b + 1e-6 for a, b in zip(mix_means, mix_means[1:]))
-            ),
             "kmatrix_unitarity_mean": float(k_mean) if np.isfinite(k_mean) else None,
             "bw_unitarity_mean": float(bw_mean) if np.isfinite(bw_mean) else None,
         }
@@ -389,8 +321,6 @@ class Generator:
         self.y_unitarity = [self.y_unitarity[i] for i in order]
         self.physics_id = [self.physics_id[i] for i in order]
         self.split = [self.split[i] for i in order]
-        self.background = [self.background[i] for i in order]
-        self.nd_slope = [self.nd_slope[i] for i in order]
         self.masses = [self.masses[i] for i in order]
         self.couplings = [self.couplings[i] for i in order]
         self.widths = [self.widths[i] for i in order]
@@ -432,8 +362,6 @@ class Generator:
             y_unitarity=np.asarray(self.y_unitarity, dtype=np.float32),
             physics_id=np.asarray(self.physics_id, dtype=np.int32),
             split=np.asarray(self.split, dtype=np.int32),
-            background=np.asarray(self.background, dtype=np.float32),
-            nd_slope=np.asarray(self.nd_slope, dtype=np.float32),
             masses=masses.astype(np.float32),
             couplings=couplings.astype(np.float32),
             widths=widths.astype(np.float32),
@@ -473,11 +401,8 @@ class Generator:
         output_dir.mkdir(parents=True, exist_ok=True)
 
         y_class = np.asarray(self.y_class)
-        y_lambda = np.asarray(self.y_lambda)
         y_unitarity = np.asarray(self.y_unitarity)
-        physics_id = np.asarray(self.physics_id)
 
-        # --- sample amplitudes per class ---
         fig, axes = plt.subplots(1, 3, figsize=(15, 4))
         for c_idx, c_name in enumerate(self.classes_names):
             candidates = np.where(y_class == c_idx)[0]
@@ -487,10 +412,9 @@ class Generator:
             vec = self.X[sample_idx]
             n = len(vec) // 2
             t_comp = vec[:n] + 1j * vec[n:]
-            label = f"{c_name} (λ={self.y_lambda[sample_idx]:.2f})"
-            axes[0].plot(self.s, np.real(t_comp), label=label)
-            axes[1].plot(self.s, np.imag(t_comp), label=label)
-            axes[2].plot(self.s, np.abs(t_comp) ** 2, label=label)
+            axes[0].plot(self.s, np.real(t_comp), label=c_name)
+            axes[1].plot(self.s, np.imag(t_comp), label=c_name)
+            axes[2].plot(self.s, np.abs(t_comp) ** 2, label=c_name)
 
         axes[0].set_title("Re(T)")
         axes[1].set_title("Im(T)")
@@ -504,46 +428,26 @@ class Generator:
         fig.savefig(out_file, dpi=150)
         plt.close(fig)
 
-        # --- controlled λ trajectory for one physics_id ---
-        mix_ids = physics_id[y_class == CLASS_MIX]
-        if mix_ids.size > 0:
-            pid = int(mix_ids[0])
-            mask = physics_id == pid
-            fig2, axes2 = plt.subplots(1, 3, figsize=(15, 4))
-            order = np.argsort(y_lambda[mask])
-            idxs = np.where(mask)[0][order]
-            for idx in idxs:
-                vec = self.X[idx]
-                n = len(vec) // 2
-                t_comp = vec[:n] + 1j * vec[n:]
-                label = f"λ={y_lambda[idx]:.2f} [{self.classes_names[y_class[idx]]}]"
-                axes2[0].plot(self.s, np.real(t_comp), label=label)
-                axes2[1].plot(self.s, np.imag(t_comp), label=label)
-                axes2[2].plot(self.s, np.abs(t_comp) ** 2, label=label)
-            axes2[0].set_title(f"Re(T) — physics_id={pid}")
-            axes2[1].set_title("Im(T)")
-            axes2[2].set_title("|T|^2")
-            for ax in axes2:
-                ax.set_xlabel("s")
-                ax.legend(fontsize=7)
-                ax.grid(True, alpha=0.3)
-            plt.tight_layout()
-            traj_file = output_dir / "lambda_trajectory.png"
-            fig2.savefig(traj_file, dpi=150)
-            plt.close(fig2)
-            print(f"Zapisano trajektorię λ: {traj_file}")
-
-        # --- unitarity vs lambda ---
-        fig3, ax3 = plt.subplots(figsize=(8, 5))
-        ax3.scatter(y_lambda, y_unitarity, alpha=0.35, s=12, c=y_class, cmap="tab10")
-        ax3.set_xlabel(r"$\lambda$")
-        ax3.set_ylabel("Unitarity violation")
-        ax3.set_title("Unitarity vs λ")
-        ax3.grid(True, alpha=0.3)
-        fig3.tight_layout()
-        unit_file = output_dir / "unitarity_vs_lambda.png"
-        fig3.savefig(unit_file, dpi=150)
-        plt.close(fig3)
+        fig2, ax2 = plt.subplots(figsize=(8, 5))
+        for c_idx, c_name in enumerate(self.classes_names):
+            mask = y_class == c_idx
+            ax2.scatter(
+                np.full(np.sum(mask), c_idx),
+                y_unitarity[mask],
+                alpha=0.35,
+                s=12,
+                label=c_name,
+            )
+        ax2.set_xticks(range(len(self.classes_names)))
+        ax2.set_xticklabels(self.classes_names)
+        ax2.set_ylabel("Unitarity violation")
+        ax2.set_title("Unitarity by class")
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        fig2.tight_layout()
+        unit_file = output_dir / "unitarity_by_class.png"
+        fig2.savefig(unit_file, dpi=150)
+        plt.close(fig2)
 
         print(f"Zapisano figurę sanity: {out_file}")
         print(f"Zapisano unitarity plot: {unit_file}")

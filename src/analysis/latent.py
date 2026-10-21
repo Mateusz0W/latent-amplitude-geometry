@@ -7,7 +7,7 @@ import torch
 from amplitudes.kinematics import vector_to_t
 from models.vae import VAE
 
-CLASS_NAMES = ["K-matrix", "Breit-Wigner", "Mix", "N/D"]
+CLASS_NAMES = ["K-matrix", "Breit-Wigner"]
 KMATRIX_CLASS = 0
 
 

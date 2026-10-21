@@ -2,3 +2,4 @@ numpy
 pyyaml
 matplotlib
 torch
+scikit-learn
