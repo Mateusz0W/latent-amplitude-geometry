@@ -31,8 +31,13 @@ SPLIT_NAMES = ("train", "val", "test")
 class PhysicsConfig:
     physics_id: int
     n_res: int
-    poles: list[tuple[float, float]]  # (M, g) for K-matrix
-    resonances: list[tuple[float, float]]  # (M, Gamma) for Breit-Wigner
+    resonances: list[tuple[float, float]]  # (M, Gamma) shared by BW and K
+    poles: list[tuple[float, float]]  # (M, g) with g = sqrt(M * Gamma)
+
+
+def coupling_from_width(mass: float, gamma: float) -> float:
+    """Promotor: g = sqrt(M * Gamma)."""
+    return float(np.sqrt(mass * gamma))
 
 
 class Generator:
@@ -64,7 +69,7 @@ class Generator:
         self.sanity_report: dict = {}
         self._physics_split: dict[int, int] = {}
 
-    def _sample_poles(self, n_res: int) -> list[tuple[float, float]]:
+    def _mass_bounds(self) -> tuple[float, float]:
         cfg = self.config
         m_min = float(cfg["mass_range"]["min"])
         m_max = float(cfg["mass_range"]["max"])
@@ -74,29 +79,50 @@ class Generator:
             m_max = min(m_max, float(np.sqrt(max(self.s[-1] - margin, 0.0))))
         if m_min >= m_max:
             m_min, m_max = float(cfg["mass_range"]["min"]), float(cfg["mass_range"]["max"])
+        return m_min, m_max
 
-        poles: list[tuple[float, float]] = []
-        for _ in range(n_res):
-            mass = float(np.random.uniform(m_min, m_max))
-            coupling = float(
-                np.random.uniform(cfg["coupling_range"]["min"], cfg["coupling_range"]["max"])
-            )
-            poles.append((mass, coupling))
-        poles.sort(key=lambda p: p[0])
-        return poles
-
-    def _resonances_from_poles(
-        self, poles: list[tuple[float, float]]
-    ) -> list[tuple[float, float]]:
-        """Same masses as K-matrix poles; independent widths for BW."""
+    def _width_bounds(self) -> tuple[float, float]:
         cfg = self.config
-        return [
-            (
-                mass,
-                float(np.random.uniform(cfg["width_range"]["min"], cfg["width_range"]["max"])),
+        return float(cfg["width_range"]["min"]), float(cfg["width_range"]["max"])
+
+    def _clip(self, value: float, lo: float, hi: float) -> float:
+        return float(np.clip(value, lo, hi))
+
+    def _sample_resonances(self, n_res: int) -> list[tuple[float, float]]:
+        """Sample (M, Γ); for n_res=2 keep the second near the first."""
+        m_min, m_max = self._mass_bounds()
+        g_min, g_max = self._width_bounds()
+        mass_delta = float(self.config.get("mass_similarity_delta", 0.25))
+        width_delta = float(self.config.get("width_similarity_delta", 0.08))
+
+        m1 = float(np.random.uniform(m_min, m_max))
+        gamma1 = float(np.random.uniform(g_min, g_max))
+        resonances = [(m1, gamma1)]
+
+        if n_res >= 2:
+            m2 = self._clip(
+                float(np.random.uniform(m1 - mass_delta, m1 + mass_delta)),
+                m_min,
+                m_max,
             )
-            for mass, _ in poles
-        ]
+            # Avoid identical poles (numerical issues)
+            if abs(m2 - m1) < 1e-3:
+                m2 = self._clip(m1 + (mass_delta if m1 + mass_delta <= m_max else -mass_delta), m_min, m_max)
+            gamma2 = self._clip(
+                float(np.random.uniform(gamma1 - width_delta, gamma1 + width_delta)),
+                g_min,
+                g_max,
+            )
+            resonances.append((m2, gamma2))
+
+        resonances.sort(key=lambda r: r[0])
+        return resonances
+
+    def _poles_from_resonances(
+        self, resonances: list[tuple[float, float]]
+    ) -> list[tuple[float, float]]:
+        """K-matrix poles: (M, g) with g = sqrt(M * Γ)."""
+        return [(mass, coupling_from_width(mass, gamma)) for mass, gamma in resonances]
 
     def _sample_physics(self, physics_id: int) -> PhysicsConfig:
         cfg = self.config
@@ -109,13 +135,13 @@ class Generator:
         else:
             n_res = int(np.random.choice(options))
 
-        poles = self._sample_poles(n_res)
-        resonances = self._resonances_from_poles(poles)
+        resonances = self._sample_resonances(n_res)
+        poles = self._poles_from_resonances(resonances)
         return PhysicsConfig(
             physics_id=physics_id,
             n_res=n_res,
-            poles=poles,
             resonances=resonances,
+            poles=poles,
         )
 
     def _is_valid_amplitude(self, t: np.ndarray) -> bool:
