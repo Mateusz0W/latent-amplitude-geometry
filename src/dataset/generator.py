@@ -475,9 +475,89 @@ class Generator:
         fig2.savefig(unit_file, dpi=150)
         plt.close(fig2)
 
+        ref_file = plot_reference_amplitudes(output_dir)
+
         print(f"Zapisano figurę sanity: {out_file}")
         print(f"Zapisano unitarity plot: {unit_file}")
+        print(f"Zapisano figurę referencyjną: {ref_file}")
         return out_file
+
+
+def plot_reference_amplitudes(
+    output_dir: str | Path | None = None,
+    *,
+    m1: float = 1.0,
+    gamma1: float = 0.15,
+    m2: float = 1.2,
+    gamma2: float = 0.15,
+    s_min: float = 0.1,
+    s_max: float = 2.5,
+    n_points: int = 1000,
+) -> Path:
+    """Moduł / faza / Argand dla ustalonych parametrów (sanity vs skrypt referencyjny).
+
+    Domyślnie: M1=1.0, Γ1=0.15, M2=1.2, Γ2=0.15, g=√(MΓ), gęsta siatka s.
+    """
+    if output_dir is None:
+        output_dir = _REPO_ROOT / "results" / "sanity"
+    else:
+        output_dir = Path(output_dir)
+        if not output_dir.is_absolute():
+            output_dir = _REPO_ROOT / output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    resonances = [(m1, gamma1), (m2, gamma2)]
+    poles = [(m, coupling_from_width(m, g)) for m, g in resonances]
+    s = np.linspace(s_min, s_max, n_points)
+
+    t_k = generate_kmatrix(s, poles)
+    t_bw = generate_breit_wigner(s, resonances)
+
+    mod_k = np.abs(t_k)
+    mod_bw = np.abs(t_bw)
+    phase_k = np.unwrap(np.angle(t_k))
+    phase_bw = np.unwrap(np.angle(t_bw))
+
+    fig = plt.figure(figsize=(16, 5))
+
+    ax1 = fig.add_subplot(131)
+    ax1.plot(s, mod_k, label="Unitarna (K-matrix)", color="blue", linewidth=2)
+    ax1.plot(s, mod_bw, label="Nieunitarna (Suma BW)", color="red", linestyle="--", linewidth=2)
+    ax1.axhline(1.0, color="gray", linestyle=":", label="Limit unitarności (|T| = 1)")
+    ax1.set_title("Moduł amplitudy |T|")
+    ax1.set_xlabel("s")
+    ax1.set_ylabel("|T|")
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    ax2 = fig.add_subplot(132)
+    ax2.plot(s, np.degrees(phase_k), label="Unitarna (K-matrix)", color="blue", linewidth=2)
+    ax2.plot(
+        s, np.degrees(phase_bw), label="Nieunitarna (Suma BW)", color="red", linestyle="--", linewidth=2
+    )
+    ax2.set_title("Faza amplitudy arg(T)")
+    ax2.set_xlabel("s")
+    ax2.set_ylabel("Faza (stopnie)")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    ax3 = fig.add_subplot(133, projection="polar")
+    ax3.plot(phase_k, mod_k, label="Unitarna (K-matrix)", color="blue", linewidth=2)
+    ax3.plot(phase_bw, mod_bw, label="Nieunitarna (Suma BW)", color="red", linestyle="--", linewidth=2)
+    theta_circle = np.linspace(0, 2 * np.pi, 100)
+    ax3.plot(theta_circle, np.ones_like(theta_circle), color="gray", linestyle=":", label="Granica unitarności")
+    ax3.set_title(
+        rf"Argand: $M=({m1},{m2}),\ \Gamma=({gamma1},{gamma2})$",
+        pad=20,
+    )
+    ax3.set_rlabel_position(90)
+    ax3.legend(loc="lower left", bbox_to_anchor=(-0.1, -0.2))
+
+    plt.tight_layout()
+    out_file = output_dir / "reference_amplitudes.png"
+    fig.savefig(out_file, dpi=150)
+    plt.close(fig)
+    return out_file
 
 
 if __name__ == "__main__":
