@@ -42,3 +42,11 @@ vae:
   test_size: 0.1
   patience: 5
   min_delta: 0.0
+
+linear_probing:
+    lr: 1.0e-3
+    num_epochs: 500
+    batch_size: 64
+    patience: 7
+    checkpoint: results/vae/best_vae.pt
+
