@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
+import umap
 
 from amplitudes.kinematics import vector_to_t
 from models.vae import VAE
@@ -77,6 +78,50 @@ def pca_variance_label(pca: PCA) -> str:
         f"PC1={100 * ratios[0]:.1f}%, PC2={100 * ratios[1]:.1f}% "
         f"(łącznie {100 * total:.1f}%)"
     )
+
+def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_components: int=2, n_neighbors: int=15, min_dist: float=0.1, metric: str="euclidean", random_state: int=42, class_names: list[str] | None = None,):
+    reducer = umap.UMAP(
+        n_components=n_components,
+        n_neighbors=n_neighbors,
+        min_dist=min_dist,
+        metric=metric,
+        random_state=random_state
+    )
+
+    z_umap = reducer.fit_transform(mu)
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    if class_names is not None:
+        for class_id, name in enumerate(class_names):
+            mask = np.asarray(color) == class_id
+            ax.scatter(
+                z_umap[mask, 0],
+                z_umap[mask, 1],
+                s=10,
+                alpha=0.7,
+                label=name,
+            )
+        ax.legend()
+    else:
+        scatter = ax.scatter(
+            z_umap[:, 0],
+            z_umap[:, 1],
+            c=color,
+            cmap="tab10",
+            s=10,
+            alpha=0.7,
+        )
+        fig.colorbar(scatter, ax=ax)
+    ax.set_xlabel("UMAP 1")
+    ax.set_ylabel("UMAP 2")
+    ax.set_title("Przestrzeń latentna VAE — UMAP")
+    ax.grid(True, alpha=0.3)
+
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"UMAP ({output_path.name})")
 
 
 def scatter_latent_2d(
