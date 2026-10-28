@@ -3,6 +3,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from sklearn.decomposition import PCA
 
 from amplitudes.kinematics import vector_to_t
 from models.vae import VAE
@@ -58,15 +59,24 @@ def decode_z(model: VAE, z: np.ndarray, device: torch.device | None = None) -> n
     return x_recon.cpu().numpy()
 
 
-def fit_pca_2d(mu: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    mean = mu.mean(axis=0)
-    centered = mu - mean
-    _u, _s, vt = np.linalg.svd(centered, full_matrices=False)
-    return mean, vt[:2]
+def fit_pca_2d(mu: np.ndarray) -> PCA:
+    """Fit 2D PCA on latent vectors μ (scikit-learn)."""
+    pca = PCA(n_components=2)
+    pca.fit(np.asarray(mu, dtype=np.float64))
+    return pca
 
 
-def transform_pca_2d(mu: np.ndarray, mean: np.ndarray, components: np.ndarray) -> np.ndarray:
-    return (mu - mean) @ components.T
+def transform_pca_2d(mu: np.ndarray, pca: PCA) -> np.ndarray:
+    return pca.transform(np.asarray(mu, dtype=np.float64))
+
+
+def pca_variance_label(pca: PCA) -> str:
+    ratios = pca.explained_variance_ratio_
+    total = float(ratios.sum())
+    return (
+        f"PC1={100 * ratios[0]:.1f}%, PC2={100 * ratios[1]:.1f}% "
+        f"(łącznie {100 * total:.1f}%)"
+    )
 
 
 def scatter_latent_2d(
@@ -77,9 +87,10 @@ def scatter_latent_2d(
     colorbar_label: str | None = None,
     cmap: str = "tab10",
     class_names: list[str] | None = None,
-) -> None:
-    mean, components = fit_pca_2d(mu)
-    xy = transform_pca_2d(mu, mean, components)
+) -> PCA:
+    pca = fit_pca_2d(mu)
+    xy = transform_pca_2d(mu, pca)
+    var_label = pca_variance_label(pca)
 
     fig, ax = plt.subplots(figsize=(8, 6))
     if class_names is not None:
@@ -92,12 +103,14 @@ def scatter_latent_2d(
         fig.colorbar(scatter, ax=ax, label=colorbar_label)
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
-    ax.set_title(title)
+    ax.set_title(f"{title}\n{var_label}")
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
+    print(f"PCA ({output_path.name}): {var_label}")
+    return pca
 
 
 def kmatrix_neighbor_distance(

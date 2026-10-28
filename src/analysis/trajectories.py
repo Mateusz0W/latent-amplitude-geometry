@@ -9,6 +9,7 @@ from analysis.latent import (
     CLASS_NAMES,
     decode_z,
     fit_pca_2d,
+    pca_variance_label,
     transform_pca_2d,
 )
 from models.vae import VAE
@@ -33,9 +34,9 @@ def plot_latent_trajectory(
     z_path: np.ndarray,
     output_path: str | Path,
 ) -> None:
-    mean, components = fit_pca_2d(mu)
-    xy = transform_pca_2d(mu, mean, components)
-    path_xy = transform_pca_2d(z_path, mean, components)
+    pca = fit_pca_2d(mu)
+    xy = transform_pca_2d(mu, pca)
+    path_xy = transform_pca_2d(z_path, pca)
 
     fig, ax = plt.subplots(figsize=(8, 6))
     for class_id, name in enumerate(CLASS_NAMES):
@@ -46,7 +47,7 @@ def plot_latent_trajectory(
     ax.scatter(path_xy[-1, 0], path_xy[-1, 1], c="black", s=40, marker="s")
     ax.set_xlabel("PC1")
     ax.set_ylabel("PC2")
-    ax.set_title("Latent interpolation")
+    ax.set_title(f"Latent interpolation\n{pca_variance_label(pca)}")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
