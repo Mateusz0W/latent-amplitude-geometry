@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 import umap
 
 from amplitudes.kinematics import vector_to_t
@@ -79,7 +80,7 @@ def pca_variance_label(pca: PCA) -> str:
         f"(łącznie {100 * total:.1f}%)"
     )
 
-def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_components: int=2, n_neighbors: int=15, min_dist: float=0.1, metric: str="euclidean", random_state: int=42, class_names: list[str] | None = None,):
+def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_components: int=2, n_neighbors: int=15, min_dist: float=0.1, metric: str="euclidean", random_state: int=42, class_names: list[str] | None = None):
     reducer = umap.UMAP(
         n_components=n_components,
         n_neighbors=n_neighbors,
@@ -88,7 +89,7 @@ def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_comp
         random_state=random_state
     )
 
-    z_umap = reducer.fit_transform(mu)
+    z_umap = reducer.fit_transform(np.asarray(mu, dtype=np.float64))
     fig, ax = plt.subplots(figsize=(8, 6))
 
     if class_names is not None:
@@ -116,12 +117,56 @@ def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_comp
     ax.set_ylabel("UMAP 2")
     ax.set_title("Przestrzeń latentna VAE — UMAP")
     ax.grid(True, alpha=0.3)
-
+    fig.tight_layout()
 
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"UMAP ({output_path.name})")
+
+def plot_tsne(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_components: int=2, perplexity: float=30, init: str="pca", lr: str="auto", random_state: int=42, class_names: list[str] | None = None):
+    tsne = TSNE(
+        n_components=n_components,
+        perplexity=perplexity,
+        init=init,
+        learning_rate=lr,
+        random_state=random_state
+    )
+
+    mu_embedded = tsne.fit_transform(np.asarray(mu, dtype=np.float64))
+    fig, ax = plt.subplots(figsize=(8, 6))
+    
+    if class_names is not None:
+        for class_id, name in enumerate(class_names):
+            mask = np.asarray(color) == class_id
+            ax.scatter(
+                mu_embedded[mask, 0],
+                mu_embedded[mask, 1],
+                s=10,
+                alpha=0.7,
+                label=name,
+            )
+        ax.legend()
+    else:
+        scatter = ax.scatter(
+            mu_embedded[:, 0],
+            mu_embedded[:, 1],
+            c=color,
+            cmap="tab10",
+            s=10,
+            alpha=0.7,
+        )
+        fig.colorbar(scatter, ax=ax)
+    ax.set_xlabel("t-SNE wymiar 1")
+    ax.set_ylabel("t-SNE wymiar 2")
+    ax.set_title("Przestrzeń latentna VAE — t-SNE")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"t-SNE ({output_path.name})")
 
 
 def scatter_latent_2d(
@@ -156,7 +201,6 @@ def scatter_latent_2d(
     plt.close(fig)
     print(f"PCA ({output_path.name}): {var_label}")
     return pca
-
 
 def kmatrix_neighbor_distance(
     mu: np.ndarray,

@@ -19,6 +19,7 @@ from analysis.latent import (
     plot_reconstructions,
     scatter_latent_2d,
     plot_umap,
+    plot_tsne,
 )
 from analysis.trajectories import (
     decode_trajectory,
@@ -87,6 +88,7 @@ def run(checkpoint: str | Path, data_path: str | Path) -> None:
     )
 
     plot_umap(mu, y_class, latent_dir / "umap.png", class_names=CLASS_NAMES)    
+    plot_tsne(mu, y_class,latent_dir / "t-sne.png", class_names=CLASS_NAMES)
 
     distances = kmatrix_neighbor_distance(mu, y_class, k=5)
     plot_kmatrix_distance(y_lambda, distances, latent_dir / "kmatrix_distance.png")
