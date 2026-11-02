@@ -419,7 +419,12 @@ class Generator:
         y_class = np.asarray(self.y_class)
         y_unitarity = np.asarray(self.y_unitarity)
 
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        fig = plt.figure(figsize=(18, 4))
+        ax_re = fig.add_subplot(141)
+        ax_im = fig.add_subplot(142)
+        ax_abs2 = fig.add_subplot(143)
+        ax_polar = fig.add_subplot(144, projection="polar")
+
         for c_idx, c_name in enumerate(self.classes_names):
             candidates = np.where(y_class == c_idx)[0]
             if candidates.size == 0:
@@ -428,20 +433,24 @@ class Generator:
             vec = self.X[sample_idx]
             n = len(vec) // 2
             t_comp = vec[:n] + 1j * vec[n:]
-            axes[0].plot(self.s, np.real(t_comp), label=c_name)
-            axes[1].plot(self.s, np.imag(t_comp), label=c_name)
-            axes[2].plot(self.s, np.abs(t_comp) ** 2, label=c_name)
+            ax_re.plot(self.s, np.real(t_comp), label=c_name)
+            ax_im.plot(self.s, np.imag(t_comp), label=c_name)
+            ax_abs2.plot(self.s, np.abs(t_comp) ** 2, label=c_name)
+            ax_polar.plot(np.angle(t_comp), np.abs(t_comp), label=c_name)
 
-        axes[0].set_title("Re(T)")
-        axes[1].set_title("Im(T)")
-        axes[2].set_title("|T|^2")
-        for ax in axes:
+        ax_re.set_title("Re(T)")
+        ax_im.set_title("Im(T)")
+        ax_abs2.set_title("|T|^2")
+        ax_polar.set_title("Argand (biegunowy)", pad=20)
+        ax_polar.set_rlabel_position(90)
+        for ax in (ax_re, ax_im, ax_abs2):
             ax.set_xlabel("s")
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
-        plt.tight_layout()
+        ax_polar.legend(fontsize=7, loc="upper right", bbox_to_anchor=(1.35, 1.1))
+        fig.tight_layout()
         out_file = output_dir / "dataset_sample.png"
-        fig.savefig(out_file, dpi=150)
+        fig.savefig(out_file, dpi=150, bbox_inches="tight")
         plt.close(fig)
 
         fig2, ax2 = plt.subplots(figsize=(8, 5))
