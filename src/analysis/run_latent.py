@@ -1,20 +1,13 @@
 import argparse
 import shutil
-import sys
 from pathlib import Path
 
 import numpy as np
-
-_SRC_ROOT = Path(__file__).resolve().parents[1]
-_REPO_ROOT = _SRC_ROOT.parent
-if str(_SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SRC_ROOT))
 
 from analysis.latent import (
     CLASS_NAMES,
     encode_mu,
     kmatrix_neighbor_distance,
-    load_vae,
     plot_kmatrix_distance,
     plot_reconstructions,
     scatter_latent_2d,
@@ -28,12 +21,9 @@ from analysis.trajectories import (
     plot_latent_trajectory,
 )
 
+from utils.utils import load_vae, get_src_and_repo_path, resolve_path
 
-def _resolve_path(path: str | Path) -> Path:
-    path = Path(path)
-    if not path.is_absolute():
-        path = _REPO_ROOT / path
-    return path
+_REPO_ROOT = get_src_and_repo_path()[1]
 
 
 def default_checkpoint() -> Path:
@@ -48,8 +38,8 @@ def default_checkpoint() -> Path:
 
 
 def run(checkpoint: str | Path, data_path: str | Path) -> None:
-    ckpt_path = _resolve_path(checkpoint)
-    npz_path = _resolve_path(data_path)
+    ckpt_path = resolve_path(checkpoint)
+    npz_path = resolve_path(data_path)
     if not ckpt_path.exists():
         raise FileNotFoundError(f"Nie znaleziono checkpointu: {ckpt_path}")
     if not npz_path.exists():

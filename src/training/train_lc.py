@@ -1,24 +1,15 @@
-import sys
 from pathlib import Path
 import argparse
 
 import numpy as np
 import torch
 import torch.optim as optim
-import yaml
 from torch.utils.data import DataLoader, TensorDataset
 
-_SRC_ROOT = Path(__file__).resolve().parents[1]
-_REPO_ROOT = _SRC_ROOT.parent
-if str(_SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SRC_ROOT))
-
 from models.linear_classifier import LinearClassifier
-from early_stopping import EarlyStopping
-from analysis.latent import load_vae, encode_mu
-
-
-
+from training.early_stopping import EarlyStopping
+from analysis.latent import encode_mu
+from utils.utils import load_config, load_vae, resolve_path
 
 def make_loader(z, y, mask, batch_size, shuffle):
     ds = TensorDataset(
@@ -42,16 +33,7 @@ def validate_model(model, loader, criterion, device):
             total += y_batch.size(0)
     return val_loss / len(loader), correct / total
 
-def load_config(yaml_path: str):
-    if not yaml_path.is_absolute():
-        yaml_path = _REPO_ROOT / yaml_path
-    with open(yaml_path, "r", encoding="utf-8") as file:
-        config = yaml.safe_load(file)
-
-    return config["linear_probing"]
-
-
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser(description="Train linear classifier model")
     
     parser.add_argument(
@@ -64,12 +46,12 @@ if __name__ == "__main__":
     args = parser.parse_args()
     yaml_path = Path(args.config)
 
-    config = load_config(yaml_path)
+    config = load_config(yaml_path)["linear_probing"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    data = np.load(_SRC_ROOT.parent / "data" / "amplitudes.npz")
+    data = np.load(resolve_path("data/amplitudes.npz"))
     X = np.asarray(data["X"], dtype=np.float32)
-    vae = load_vae(_REPO_ROOT / config["checkpoint"])  
+    vae = load_vae(config["checkpoint"])
     z = encode_mu(vae, X)                 
     y = np.asarray(data["y_class"], dtype=np.float32).reshape(-1, 1)
     split = np.asarray(data["split"])   
@@ -117,5 +99,5 @@ if __name__ == "__main__":
     test_loss, test_acc = validate_model(model, test_loader, criterion, device)
     print(f"Test acc: {test_acc:.4f}")
 
-
-
+if __name__ == "__main__":
+    main()

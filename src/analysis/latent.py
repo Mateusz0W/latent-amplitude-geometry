@@ -14,33 +14,6 @@ CLASS_NAMES = ["K-matrix", "Breit-Wigner"]
 KMATRIX_CLASS = 0
 
 
-def load_vae(checkpoint_path: str | Path, device: torch.device | None = None) -> VAE:
-    if device is None:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    checkpoint_path = Path(checkpoint_path)
-    try:
-        state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
-    except TypeError:
-        state_dict = torch.load(checkpoint_path, map_location=device)
-
-    hidden_dim = []
-    idx = 0
-    while f"encoder.{idx}.weight" in state_dict:
-        hidden_dim.append(int(state_dict[f"encoder.{idx}.weight"].shape[0]))
-        idx += 2
-
-    model = VAE(
-        input_dim=int(state_dict["encoder.0.weight"].shape[1]),
-        hidden_dim=hidden_dim,
-        latent_dim=int(state_dict["fc_mu.weight"].shape[0]),
-    )
-    model.load_state_dict(state_dict)
-    model.to(device)
-    model.eval()
-    return model
-
-
 @torch.no_grad()
 def encode_mu(model: VAE, X: np.ndarray, device: torch.device | None = None) -> np.ndarray:
     if device is None:

@@ -1,17 +1,12 @@
-import sys
-from pathlib import Path
 
 import numpy as np
 from torch.utils.data import DataLoader, random_split
 import torch
 import torch.optim as optim
 
-_SRC_ROOT = Path(__file__).resolve().parents[1]
-if str(_SRC_ROOT) not in sys.path:
-    sys.path.append(str(_SRC_ROOT))
-
 from models.vae import VAE
-from early_stopping import EarlyStopping
+from training.early_stopping import EarlyStopping
+from utils.utils import resolve_path
 
 def split_data(data: np.ndarray, batch_size: int=32, train_size: int=0.7, test_size: int=0.15) -> tuple[DataLoader, DataLoader, DataLoader]:
     if (train_size + test_size) >= 1:
@@ -61,11 +56,9 @@ def validate_model(model, val_loader):
 
     return val_loss, val_recon, val_kl
 
-
-if __name__ == "__main__":
-
+def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    data = np.load(_SRC_ROOT.parent / "data" / "amplitudes.npz")
+    data = np.load(resolve_path("data/amplitudes.npz"))
     X = np.asarray(data["X"], dtype=np.float32)
     y_class = np.asarray(data["y_class"])
     s_grid = np.asarray(data["s_grid"])
@@ -133,13 +126,13 @@ if __name__ == "__main__":
 
     if early_stopping.best_model is not None:
         model.load_state_dict(early_stopping.best_model)
-        model_path = _SRC_ROOT.parent / "src" / "models" / "best_vae.pt"
+        model_path = resolve_path("src/models/best_vae.pt")
         torch.save(model.state_dict(), model_path)
         print(f"Best model saved to: {model_path}")
 
         from analysis.latent import plot_loss_curves, plot_reconstructions
 
-        results_dir = _SRC_ROOT.parent / "results" / "vae"
+        results_dir = resolve_path("results/vae")
         results_dir.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), results_dir / "best_vae.pt")
         plot_loss_curves(train_losses, val_losses, results_dir / "loss_curves.png")
@@ -147,3 +140,7 @@ if __name__ == "__main__":
             model, X, s_grid, y_class, results_dir / "reconstructions.png"
         )
         print(f"Zapisano figury VAE: {results_dir}")
+
+
+if __name__ == "__main__":
+    main()

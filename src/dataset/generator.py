@@ -1,22 +1,16 @@
 import argparse
 import json
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import yaml
-
-_SRC_ROOT = Path(__file__).resolve().parents[1]
-_REPO_ROOT = _SRC_ROOT.parent
-if str(_SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(_SRC_ROOT))
 
 from amplitudes.breit_wigner import generate_breit_wigner
 from amplitudes.kinematics import get_grid, get_phase_space, t_to_vector
 from amplitudes.kmatrix import generate_kmatrix
 from amplitudes.unitarity import unitarity_violation
+from utils.utils import load_config, resolve_path
 
 CLASS_KMATRIX = 0
 CLASS_BW = 1
@@ -42,11 +36,7 @@ def coupling_from_width(mass: float, gamma: float) -> float:
 
 class Generator:
     def __init__(self, yaml_path: str | Path):
-        yaml_path = Path(yaml_path)
-        if not yaml_path.is_absolute():
-            yaml_path = _REPO_ROOT / yaml_path
-        with open(yaml_path, "r", encoding="utf-8") as file:
-            self.config = yaml.safe_load(file)
+        self.config = load_config(yaml_path)
 
         np.random.seed(int(self.config["seed"]))
         self.classes_names = ["K-matrix", "Breit-Wigner"]
@@ -363,11 +353,11 @@ class Generator:
 
     def save(self, output_path: str | Path | None = None) -> Path:
         if output_path is None:
-            output_path = _REPO_ROOT / "data" / "amplitudes.npz"
+            output_path = resolve_path("data/amplitudes.npz")
         else:
             output_path = Path(output_path)
             if not output_path.is_absolute():
-                output_path = _REPO_ROOT / output_path
+                output_path = resolve_path(output_path)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         max_n_res = 2
@@ -404,11 +394,11 @@ class Generator:
 
     def save_sanity_report(self, output_dir: str | Path | None = None) -> Path:
         if output_dir is None:
-            output_dir = _REPO_ROOT / "results" / "sanity"
+            output_dir = resolve_path("results/sanity")
         else:
             output_dir = Path(output_dir)
             if not output_dir.is_absolute():
-                output_dir = _REPO_ROOT / output_dir
+                output_dir = resolve_path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         out_file = output_dir / "report.json"
         with open(out_file, "w", encoding="utf-8") as f:
@@ -418,11 +408,11 @@ class Generator:
 
     def draw(self, output_dir: str | Path | None = None) -> Path:
         if output_dir is None:
-            output_dir = _REPO_ROOT / "results" / "sanity"
+            output_dir = resolve_path("results/sanity")
         else:
             output_dir = Path(output_dir)
             if not output_dir.is_absolute():
-                output_dir = _REPO_ROOT / output_dir
+                output_dir = resolve_path(output_dir)
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -499,11 +489,11 @@ def plot_reference_amplitudes(
     Domyślnie: M1=1.0, Γ1=0.15, M2=1.2, Γ2=0.15, g=√(MΓ), gęsta siatka s.
     """
     if output_dir is None:
-        output_dir = _REPO_ROOT / "results" / "sanity"
+        output_dir = resolve_path("results/sanity")
     else:
         output_dir = Path(output_dir)
         if not output_dir.is_absolute():
-            output_dir = _REPO_ROOT / output_dir
+            output_dir = resolve_path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     resonances = [(m1, gamma1), (m2, gamma2)]
@@ -560,7 +550,7 @@ def plot_reference_amplitudes(
     return out_file
 
 
-if __name__ == "__main__":
+def main() -> None:
     parser = argparse.ArgumentParser(description="Generate amplitude dataset")
     parser.add_argument(
         "--config",
@@ -581,3 +571,6 @@ if __name__ == "__main__":
     generator.save(args.output)
     generator.save_sanity_report()
     generator.draw()
+
+if __name__ == "__main__":
+    main()
