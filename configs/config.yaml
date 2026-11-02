@@ -35,7 +35,7 @@ vae:
   latent_dim: 8
   hidden_dim: [256, 128]
   batch_size: 64
-  num_epochs: 80
+  num_epochs: 500
   lr: 1.0e-3
   train_size: 0.8
   val_size: 0.1

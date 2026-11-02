@@ -1,3 +1,5 @@
+from pathlib import Path
+import argparse
 
 import numpy as np
 from torch.utils.data import DataLoader, random_split
@@ -6,7 +8,7 @@ import torch.optim as optim
 
 from models.vae import VAE
 from training.early_stopping import EarlyStopping
-from utils.utils import resolve_path
+from utils.utils import resolve_path, load_config
 
 def split_data(data: np.ndarray, batch_size: int=32, train_size: int=0.7, test_size: int=0.15) -> tuple[DataLoader, DataLoader, DataLoader]:
     if (train_size + test_size) >= 1:
@@ -29,7 +31,7 @@ def split_data(data: np.ndarray, batch_size: int=32, train_size: int=0.7, test_s
 
     return train_loader, val_loader, test_loader
 
-def validate_model(model, val_loader):
+def validate_model(model, val_loader, device):
     model.eval()
     
     val_loss = 0.0
@@ -57,24 +59,35 @@ def validate_model(model, val_loader):
     return val_loss, val_recon, val_kl
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Train VAE model")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/config.yaml",
+        help="Path to YAML config (relative to repo root or absolute)",
+    )
+    args = parser.parse_args()
+    yaml_path = Path(args.config)
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data = np.load(resolve_path("data/amplitudes.npz"))
     X = np.asarray(data["X"], dtype=np.float32)
     y_class = np.asarray(data["y_class"])
     s_grid = np.asarray(data["s_grid"])
 
-    train_loader, val_loader, test_loader = split_data(X)
+    config = load_config(yaml_path)["vae"]
+    train_loader, val_loader, test_loader = split_data(X, batch_size=config["batch_size"], train_size=config["train_size"], test_size=config["test_size"])
 
     model = VAE(
         input_dim=X.shape[1],
-        hidden_dim=[128, 64],
-        latent_dim=16
+        hidden_dim=config["hidden_dim"],
+        latent_dim=config["latent_dim"]
     ).to(device)
 
-    early_stopping = EarlyStopping(patience=7)
+    early_stopping = EarlyStopping(patience=config["patience"], min_delta= config["min_delta"])
 
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    num_epochs = 500
+    optimizer = optim.Adam(model.parameters(), lr=config["lr"])
+    num_epochs = config["num_epochs"]
     train_losses = []
     val_losses = []
 
@@ -107,7 +120,7 @@ def main() -> None:
         train_recon /= len(train_loader)
         train_kl /= len(train_loader)
 
-        val_loss, val_recon, val_kl = validate_model(model, val_loader)
+        val_loss, val_recon, val_kl = validate_model(model, val_loader, device)
         early_stopping(val_loss, model)
 
         print(
