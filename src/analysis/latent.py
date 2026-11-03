@@ -33,25 +33,52 @@ def decode_z(model: VAE, z: np.ndarray, device: torch.device | None = None) -> n
     x_recon = model.decode(z_t)
     return x_recon.cpu().numpy()
 
-
-def fit_pca_2d(mu: np.ndarray) -> PCA:
-    """Fit 2D PCA on latent vectors μ (scikit-learn)."""
-    pca = PCA(n_components=2)
-    pca.fit(np.asarray(mu, dtype=np.float64))
-    return pca
-
-
-def transform_pca_2d(mu: np.ndarray, pca: PCA) -> np.ndarray:
-    return pca.transform(np.asarray(mu, dtype=np.float64))
-
-
-def pca_variance_label(pca: PCA) -> str:
+def plot_pca(mu: np.ndarray, color: np.ndarray, output_path: str | Path, title: str, colorbar_label: str | None = None, cmap: str = "tab10", class_names: list[str] | None = None, n_components: int = 2):
+    if n_components not in (2, 3):
+        raise ValueError("n_components must be 2 or 3")
+    pca = PCA(n_components=n_components)
+    xy = pca.fit_transform(np.asarray(mu, dtype=np.float64))
     ratios = pca.explained_variance_ratio_
     total = float(ratios.sum())
-    return (
-        f"PC1={100 * ratios[0]:.1f}%, PC2={100 * ratios[1]:.1f}% "
-        f"(łącznie {100 * total:.1f}%)"
+    result_str = "".join(
+        f"PC{idx}={100 * ratio:.1f}% " for idx, ratio in enumerate(ratios, start=1)
     )
+    var_label = f"{result_str}(łącznie {100 * total:.1f}%)"
+
+    if n_components == 2:
+        fig, ax = plt.subplots(figsize=(8, 6))
+    else:
+        fig = plt.figure(figsize=(9, 7))
+        ax = fig.add_subplot(111, projection="3d")
+
+    if class_names is not None:
+        for class_id, name in enumerate(class_names):
+            mask = np.asarray(color) == class_id
+            if n_components == 2:
+                ax.scatter(xy[mask, 0], xy[mask, 1], alpha=0.75, s=18, label=name)
+            else:
+                ax.scatter(xy[mask, 0], xy[mask, 1], xy[mask, 2], alpha=0.75, s=18, label=name)
+        ax.legend()
+    else:
+        if n_components == 2:
+            scatter = ax.scatter(xy[:, 0], xy[:, 1], c=color, cmap=cmap, alpha=0.75, s=18)
+        else:
+            scatter = ax.scatter(xy[:, 0], xy[:, 1], xy[:, 2], c=color, cmap=cmap, alpha=0.75, s=18)
+        fig.colorbar(scatter, ax=ax, label=colorbar_label)
+
+    ax.set_xlabel("PC1")
+    ax.set_ylabel("PC2")
+    if n_components == 3:
+        ax.set_zlabel("PC3")
+
+    ax.set_title(f"{title}\n{var_label}")
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"PCA ({Path(output_path).name}): {var_label}")
+
 
 def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_components: int=2, n_neighbors: int=15, min_dist: float=0.1, metric: str="euclidean", random_state: int=42, class_names: list[str] | None = None):
     reducer = umap.UMAP(
@@ -140,40 +167,6 @@ def plot_tsne(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_comp
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
     print(f"t-SNE ({output_path.name})")
-
-
-def scatter_latent_2d(
-    mu: np.ndarray,
-    color: np.ndarray,
-    output_path: str | Path,
-    title: str,
-    colorbar_label: str | None = None,
-    cmap: str = "tab10",
-    class_names: list[str] | None = None,
-) -> PCA:
-    pca = fit_pca_2d(mu)
-    xy = transform_pca_2d(mu, pca)
-    var_label = pca_variance_label(pca)
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    if class_names is not None:
-        for class_id, name in enumerate(class_names):
-            mask = np.asarray(color) == class_id
-            ax.scatter(xy[mask, 0], xy[mask, 1], alpha=0.75, s=18, label=name)
-        ax.legend()
-    else:
-        scatter = ax.scatter(xy[:, 0], xy[:, 1], c=color, cmap=cmap, alpha=0.75, s=18)
-        fig.colorbar(scatter, ax=ax, label=colorbar_label)
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    ax.set_title(f"{title}\n{var_label}")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
-    print(f"PCA ({output_path.name}): {var_label}")
-    return pca
 
 def kmatrix_neighbor_distance(
     mu: np.ndarray,

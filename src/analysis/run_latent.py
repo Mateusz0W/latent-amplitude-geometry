@@ -10,15 +10,9 @@ from analysis.latent import (
     kmatrix_neighbor_distance,
     plot_kmatrix_distance,
     plot_reconstructions,
-    scatter_latent_2d,
     plot_umap,
     plot_tsne,
-)
-from analysis.trajectories import (
-    decode_trajectory,
-    interpolate_latent,
-    plot_decoded_trajectory,
-    plot_latent_trajectory,
+    plot_pca,
 )
 
 from utils.utils import load_vae, get_src_and_repo_path, resolve_path
@@ -61,35 +55,13 @@ def run(checkpoint: str | Path, data_path: str | Path) -> None:
     shutil.copy2(ckpt_path, vae_dir / "best_vae.pt")
 
     plot_reconstructions(model, X, s_grid, y_class, vae_dir / "reconstructions.png")
-    scatter_latent_2d(
-        mu,
-        y_class,
-        latent_dir / "scatter_class.png",
-        title="Latent PCA — klasa",
-        class_names=CLASS_NAMES,
-    )
-    scatter_latent_2d(
-        mu,
-        y_lambda,
-        latent_dir / "scatter_lambda.png",
-        title=r"Latent PCA — $\lambda$",
-        colorbar_label=r"$\lambda$",
-        cmap="viridis",
-    )
-
+    
+    plot_pca(mu, y_class, latent_dir / "pca.png", title="Latent PCA — klasa", class_names=CLASS_NAMES, n_components=3)
     plot_umap(mu, y_class, latent_dir / "umap.png", class_names=CLASS_NAMES)    
     plot_tsne(mu, y_class,latent_dir / "t-sne.png", class_names=CLASS_NAMES)
 
     distances = kmatrix_neighbor_distance(mu, y_class, k=5)
     plot_kmatrix_distance(y_lambda, distances, latent_dir / "kmatrix_distance.png")
-
-    rng = np.random.default_rng(42)
-    k_idx = rng.choice(np.where(y_class == 0)[0])
-    bw_idx = rng.choice(np.where(y_class == 1)[0])
-    alphas, z_path = interpolate_latent(mu[k_idx], mu[bw_idx], n=21)
-    x_hat = decode_trajectory(model, z_path)
-    plot_latent_trajectory(mu, y_class, z_path, latent_dir / "trajectory_scatter.png")
-    plot_decoded_trajectory(s_grid, x_hat, alphas, latent_dir / "trajectory_decoded.png")
 
     np.savez(
         latent_dir / "mu.npz",
@@ -97,8 +69,6 @@ def run(checkpoint: str | Path, data_path: str | Path) -> None:
         y_class=y_class,
         y_lambda=y_lambda,
         distances=distances,
-        k_idx=np.asarray([k_idx]),
-        bw_idx=np.asarray([bw_idx]),
     )
     print(f"Zapisano rekonstrukcje: {vae_dir / 'reconstructions.png'}")
     print(f"Zapisano figury latent: {latent_dir}")
