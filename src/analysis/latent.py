@@ -1,11 +1,14 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import seaborn as sns
 import numpy as np
+import pandas as pd
 import torch
-from sklearn.decomposition import PCA
+from torch.distributions import MultivariateNormal, kl_divergence
 from sklearn.manifold import TSNE
 import umap
+import ot
 
 from amplitudes.kinematics import vector_to_t
 from models.vae import VAE
@@ -15,12 +18,15 @@ KMATRIX_CLASS = 0
 
 
 @torch.no_grad()
-def encode_mu(model: VAE, X: np.ndarray, device: torch.device | None = None) -> np.ndarray:
+def encode_mu(model: VAE, X: np.ndarray, device: torch.device | None = None, batch_size: int = 1024) -> np.ndarray:
     if device is None:
         device = next(model.parameters()).device
-    x = torch.from_numpy(np.asarray(X, dtype=np.float32)).to(device)
-    mu, _logvar = model.encode(x)
-    return mu.cpu().numpy()
+    mus = []
+    for start in range(0, len(X), batch_size):
+        x = torch.from_numpy(np.asarray(X[start:start + batch_size], dtype=np.float32)).to(device)
+        mu, _logvar = model.encode(x)
+        mus.append(mu.cpu().numpy())
+    return np.concatenate(mus, axis=0)
 
 
 @torch.no_grad()
@@ -32,53 +38,6 @@ def decode_z(model: VAE, z: np.ndarray, device: torch.device | None = None) -> n
         z_t = z_t.unsqueeze(0)
     x_recon = model.decode(z_t)
     return x_recon.cpu().numpy()
-
-def plot_pca(mu: np.ndarray, color: np.ndarray, output_path: str | Path, title: str, colorbar_label: str | None = None, cmap: str = "tab10", class_names: list[str] | None = None, n_components: int = 2):
-    if n_components not in (2, 3):
-        raise ValueError("n_components must be 2 or 3")
-    pca = PCA(n_components=n_components)
-    xy = pca.fit_transform(np.asarray(mu, dtype=np.float64))
-    ratios = pca.explained_variance_ratio_
-    total = float(ratios.sum())
-    result_str = "".join(
-        f"PC{idx}={100 * ratio:.1f}% " for idx, ratio in enumerate(ratios, start=1)
-    )
-    var_label = f"{result_str}(łącznie {100 * total:.1f}%)"
-
-    if n_components == 2:
-        fig, ax = plt.subplots(figsize=(8, 6))
-    else:
-        fig = plt.figure(figsize=(9, 7))
-        ax = fig.add_subplot(111, projection="3d")
-
-    if class_names is not None:
-        for class_id, name in enumerate(class_names):
-            mask = np.asarray(color) == class_id
-            if n_components == 2:
-                ax.scatter(xy[mask, 0], xy[mask, 1], alpha=0.75, s=18, label=name)
-            else:
-                ax.scatter(xy[mask, 0], xy[mask, 1], xy[mask, 2], alpha=0.75, s=18, label=name)
-        ax.legend()
-    else:
-        if n_components == 2:
-            scatter = ax.scatter(xy[:, 0], xy[:, 1], c=color, cmap=cmap, alpha=0.75, s=18)
-        else:
-            scatter = ax.scatter(xy[:, 0], xy[:, 1], xy[:, 2], c=color, cmap=cmap, alpha=0.75, s=18)
-        fig.colorbar(scatter, ax=ax, label=colorbar_label)
-
-    ax.set_xlabel("PC1")
-    ax.set_ylabel("PC2")
-    if n_components == 3:
-        ax.set_zlabel("PC3")
-
-    ax.set_title(f"{title}\n{var_label}")
-    ax.grid(True, alpha=0.3)
-    fig.tight_layout()
-    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=150)
-    plt.close(fig)
-    print(f"PCA ({Path(output_path).name}): {var_label}")
-
 
 def plot_umap(mu: np.ndarray, color: np.ndarray, output_path: str | Path, n_components: int=2, n_neighbors: int=15, min_dist: float=0.1, metric: str="euclidean", random_state: int=42, class_names: list[str] | None = None):
     reducer = umap.UMAP(
@@ -283,3 +242,118 @@ def plot_loss_curves(
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150)
     plt.close(fig)
+
+def calculate_latent_class_distributions(
+        model: VAE,
+        X: np.ndarray,
+        y_class: np.ndarray,
+        subset_size: int,
+        num_of_drawings: int,
+        device: torch.device | None = None,
+        seed: int = 42,
+) -> dict[str, dict[str, np.ndarray]]:
+
+    PAIR_NAMES = ("Unitary-Unitary", "Nonunitary-Nonunitary", "Mix-Mix", "Unitary-Nonunitary")
+
+    #prepare data
+    y_class = np.asarray(y_class)
+    model.eval()
+    mask_unit = y_class == KMATRIX_CLASS  
+    Z = encode_mu(model, X, device)      
+    Z_unit = Z[mask_unit]             
+    Z_nonunit = Z[~mask_unit]  
+    Z_mix = Z
+
+    rng = np.random.default_rng(seed)
+
+    results = {name: {"kl": [], "wasserstein": []} for name in PAIR_NAMES}
+
+    for idx, _ in enumerate(range(num_of_drawings), start=1):
+        print(f"\rcalculating latent class distributions: {(idx )/num_of_drawings * 100:.2f}%", end="", flush=True)
+        #sampling of subsets
+        Z_unit1, Z_unit2 = _select_two_disjoint_subsets(Z_unit, subset_size, subset_size, rng)
+        Z_nonunit1, Z_nonunit2 = _select_two_disjoint_subsets(Z_nonunit, subset_size, subset_size, rng)
+        Z_mix1, Z_mix2 = _select_two_disjoint_subsets(Z_mix, subset_size, subset_size, rng)
+        Z_unitary, Z_nonunitary = _select_subset(Z_unit, subset_size, rng), _select_subset(Z_nonunit, subset_size, rng)
+
+        #calculate metrics
+        for metric in ["kl", "wasserstein"]:
+            f = _calculate_kl_divergence if metric == "kl" else _calculate_wasserstein_distance
+            results["Unitary-Unitary"][metric].append(f(Z_unit1, Z_unit2))
+            results["Nonunitary-Nonunitary"][metric].append(f(Z_nonunit1, Z_nonunit2))
+            results["Mix-Mix"][metric].append(f(Z_mix1, Z_mix2))
+            results["Unitary-Nonunitary"][metric].append(f(Z_unitary, Z_nonunitary))
+
+    print()
+    return {name: {m: np.asarray(v) for m, v in metrics.items()} for name, metrics in results.items()}
+ 
+def _select_two_disjoint_subsets(data: np.ndarray, subset1_size: int, subset2_size: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    assert subset1_size + subset2_size <= len(data), "The sizes of the subsets exceed the size of the set"
+    idx = rng.choice(len(data), subset1_size + subset2_size, replace=False)
+    return data[idx[:subset1_size]], data[idx[subset1_size:]]
+
+def _select_subset(data: np.ndarray, subset_size: int, rng: np.random.Generator) -> np.ndarray:
+    assert subset_size <= len(data), "The size of the subset exceed the size of the set"
+    return data[rng.choice(len(data), subset_size, replace=False)]
+
+def _calculate_wasserstein_distance(A: np.ndarray, B: np.ndarray, metric: str="euclidean", numItermax=1_000_000):
+    M = ot.dist(A, B, metric=metric)
+    return ot.emd2(ot.unif(len(A)), ot.unif(len(B)), M, numItermax=numItermax)
+
+def _fit_gauss(Z):
+    Z = torch.as_tensor(Z, dtype=torch.float64)
+    cov = torch.cov(Z.T) + 1e-6 * torch.eye(Z.shape[1], dtype=torch.float64)
+    return MultivariateNormal(Z.mean(0), covariance_matrix=cov)
+
+def _calculate_kl_divergence(A: np.ndarray, B: np.ndarray):
+    p, q = _fit_gauss(A), _fit_gauss(B)
+    return 0.5 * (kl_divergence(p, q) + kl_divergence(q, p)).item()
+
+def plot_metric_histograms(
+    results: dict[str, dict[str, np.ndarray]],
+    output_dir: str | Path,
+    pairs: list[str] | None = None,
+    log_scale: bool = True,
+    suffix: str = "",
+) -> None:
+    df = pd.DataFrame([
+            {"pair": pair, "metric": metric, "value": float(v)}
+            for pair, metrics in results.items()
+            for metric, values in metrics.items()
+            for v in values
+        ])
+    if pairs is not None:
+        df = df[df["pair"].isin(pairs)]
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    METRIC_LABELS = {
+        "kl": r"Symetryczna $D_{KL}$",
+        "wasserstein": r"Wasserstein $W_1$",
+    }
+
+    for metric, label in METRIC_LABELS.items():
+        fig, ax = plt.subplots(figsize=(9, 5))
+        sns.histplot(
+            data=df[df["metric"] == metric],
+            x="value",
+            hue="pair",
+            bins=50,
+            stat="density",
+            common_norm=False,
+            element="step",
+            kde=True,
+            log_scale=log_scale,
+            ax=ax,
+        )
+        ax.set_xlabel(label)
+        ax.set_ylabel("Gęstość")
+        ax.set_title(f"{label} między podzbiorami w przestrzeni latentnej")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        out_file = output_dir / f"hist_{metric}{suffix}.png"
+        fig.savefig(out_file, dpi=150)
+        plt.close(fig)
+        print(f"Histogram ({out_file.name})")
+

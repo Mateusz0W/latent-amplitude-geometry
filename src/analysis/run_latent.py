@@ -12,10 +12,20 @@ from analysis.latent import (
     plot_reconstructions,
     plot_umap,
     plot_tsne,
-    plot_pca,
+    calculate_latent_class_distributions,
+    plot_metric_histograms
 )
 
-from utils.utils import load_vae, get_src_and_repo_path, resolve_path
+from utils.utils import (
+    load_vae,
+    get_src_and_repo_path,
+    resolve_path,
+    get_device,
+    plot_pca,
+    load_config,
+    split_by_physics_id,
+    SPLIT_TEST,
+)
 
 _REPO_ROOT = get_src_and_repo_path()[1]
 
@@ -44,32 +54,49 @@ def run(checkpoint: str | Path, data_path: str | Path) -> None:
         y_class = np.asarray(data["y_class"])
         y_lambda = np.asarray(data["y_lambda"])
         s_grid = np.asarray(data["s_grid"])
+        physics_id = np.asarray(data["physics_id"])
 
-    model = load_vae(ckpt_path)
-    mu = encode_mu(model, X)
 
     vae_dir = _REPO_ROOT / "results" / "vae"
     latent_dir = _REPO_ROOT / "results" / "latent"
+    config_path = _REPO_ROOT / "configs" / "config.yaml"
+    full_config = load_config(config_path)
+    split = split_by_physics_id(physics_id, full_config["split"], full_config["seed"])   
+
+    model = load_vae(ckpt_path)
+    mu = encode_mu(model, X[split == SPLIT_TEST])
+
     vae_dir.mkdir(parents=True, exist_ok=True)
     latent_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ckpt_path, vae_dir / "best_vae.pt")
 
     plot_reconstructions(model, X, s_grid, y_class, vae_dir / "reconstructions.png")
     
-    plot_pca(mu, y_class, latent_dir / "pca.png", title="Latent PCA — klasa", class_names=CLASS_NAMES, n_components=3)
-    plot_umap(mu, y_class, latent_dir / "umap.png", class_names=CLASS_NAMES)    
-    plot_tsne(mu, y_class,latent_dir / "t-sne.png", class_names=CLASS_NAMES)
+    plot_pca(mu, y_class[split == SPLIT_TEST], latent_dir / "pca.png", title="Latent PCA — klasa", class_names=CLASS_NAMES, n_components=3)
+    plot_umap(mu, y_class[split == SPLIT_TEST], latent_dir / "umap.png", class_names=CLASS_NAMES)    
+    plot_tsne(mu, y_class[split == SPLIT_TEST],latent_dir / "t-sne.png", class_names=CLASS_NAMES)
 
-    distances = kmatrix_neighbor_distance(mu, y_class, k=5)
-    plot_kmatrix_distance(y_lambda, distances, latent_dir / "kmatrix_distance.png")
+    device = get_device()
+    metric_results = calculate_latent_class_distributions(model, X[split == SPLIT_TEST], y_class[split == SPLIT_TEST], 500, 1000, device=device)
 
-    np.savez(
-        latent_dir / "mu.npz",
-        mu=mu,
-        y_class=y_class,
-        y_lambda=y_lambda,
-        distances=distances,
+    plot_metric_histograms(
+        metric_results, "results/latent_metrics",
+        pairs=["Unitary-Unitary", "Nonunitary-Nonunitary"],
+        suffix="_UU_NN",
     )
+
+    plot_metric_histograms(metric_results, "results/latent_metrics", suffix="_all")
+
+    # distances = kmatrix_neighbor_distance(mu, y_class, k=5)
+    # plot_kmatrix_distance(y_lambda, distances, latent_dir / "kmatrix_distance.png")
+
+    # np.savez(
+    #     latent_dir / "mu.npz",
+    #     mu=mu,
+    #     y_class=y_class,
+    #     y_lambda=y_lambda,
+    #     distances=distances,
+    # )
     print(f"Zapisano rekonstrukcje: {vae_dir / 'reconstructions.png'}")
     print(f"Zapisano figury latent: {latent_dir}")
 
