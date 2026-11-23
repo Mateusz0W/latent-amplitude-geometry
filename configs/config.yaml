@@ -1,30 +1,29 @@
 seed: 42
 m_pi: 0.13957
-s_max: 2.0
-n_points: 128
+s_max: 2.5
+n_points: 1000          # kluczowe vs artefakty; było 128
 
-# Independent resonance configurations; each emits K-matrix + Breit-Wigner
-n_physics: 1000
+n_physics: 10_000
 
-n_res_options: [1, 2]
-n_res_probs: [0.5, 0.5]
+n_res_options: [2]
+n_res_probs: [1.0]
 
+# masy wokół M≈1.0 i 1.2 (peak przy s=M² → ~1.0 i ~1.44)
 mass_range:
-  min: 0.5
+  min: 0.8
   max: 1.4
 width_range:
-  min: 0.05
-  max: 0.25
+  min: 0.08
+  max: 0.25           # ≈ 0.15 jak w skrypcie
 
-# For n_res=2: second resonance stays near the first
+# pozwól na odstęp ~0.2 (jak 1.0 vs 1.2)
 mass_similarity_delta: 0.25
-width_similarity_delta: 0.08
+width_similarity_delta: 0.05
 
-# Reject samples with NaN/Inf or max|T| above this
 max_abs_t: 50.0
 
-# none | rms | max_abs  (fit on train split only, applied to all)
-normalization: rms
+# do figur fizycznych lepiej bez skalowania
+normalization: none
 
 split:
   train: 0.8
@@ -37,16 +36,12 @@ vae:
   batch_size: 64
   num_epochs: 500
   lr: 1.0e-3
-  train_size: 0.8
-  val_size: 0.1
-  test_size: 0.1
   patience: 5
   min_delta: 0.0
 
 linear_probing:
-    lr: 1.0e-3
-    num_epochs: 500
-    batch_size: 64
-    patience: 7
-    checkpoint: results/vae/best_vae.pt
-
+  lr: 1.0e-3
+  num_epochs: 500
+  batch_size: 64
+  patience: 7
+  checkpoint: results/vae/best_vae.pt
