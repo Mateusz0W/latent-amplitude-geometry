@@ -10,15 +10,10 @@ from amplitudes.breit_wigner import generate_breit_wigner
 from amplitudes.kinematics import get_grid, get_phase_space, t_to_vector
 from amplitudes.kmatrix import generate_kmatrix
 from amplitudes.unitarity import unitarity_violation
-from utils.utils import load_config, resolve_path
+from utils.utils import load_config, resolve_path, plot_pca
 
 CLASS_KMATRIX = 0
 CLASS_BW = 1
-
-SPLIT_TRAIN = 0
-SPLIT_VAL = 1
-SPLIT_TEST = 2
-SPLIT_NAMES = ("train", "val", "test")
 
 
 @dataclass
@@ -47,7 +42,6 @@ class Generator:
         self.y_n_res: list[int] = []
         self.y_unitarity: list[float] = []
         self.physics_id: list[int] = []
-        self.split: list[int] = []
         self.masses: list[np.ndarray] = []
         self.couplings: list[np.ndarray] = []
         self.widths: list[np.ndarray] = []
@@ -57,7 +51,6 @@ class Generator:
         self.s_th: float | None = None
         self.norm_scale: float = 1.0
         self.sanity_report: dict = {}
-        self._physics_split: dict[int, int] = {}
 
     def _mass_bounds(self) -> tuple[float, float]:
         cfg = self.config
@@ -146,7 +139,6 @@ class Generator:
         class_id: int,
         lam: float,
         phys: PhysicsConfig,
-        split_id: int,
     ) -> bool:
         if not self._is_valid_amplitude(t):
             return False
@@ -166,36 +158,10 @@ class Generator:
         self.y_n_res.append(int(phys.n_res))
         self.y_unitarity.append(float(unitarity_violation(t, rho=None)))
         self.physics_id.append(int(phys.physics_id))
-        self.split.append(int(split_id))
         self.masses.append(masses)
         self.couplings.append(couplings)
         self.widths.append(widths)
         return True
-
-    def _assign_physics_splits(self, n_physics: int) -> dict[int, int]:
-        split_cfg = self.config.get("split", {"train": 0.8, "val": 0.1, "test": 0.1})
-        train_f = float(split_cfg.get("train", 0.8))
-        val_f = float(split_cfg.get("val", 0.1))
-        test_f = float(split_cfg.get("test", 0.1))
-        total = train_f + val_f + test_f
-        if not np.isclose(total, 1.0):
-            raise ValueError(f"split fractions must sum to 1, got {total}")
-
-        ids = np.arange(n_physics)
-        rng = np.random.default_rng(int(self.config["seed"]))
-        rng.shuffle(ids)
-
-        n_train = int(n_physics * train_f)
-        n_val = int(n_physics * val_f)
-        mapping: dict[int, int] = {}
-        for i, pid in enumerate(ids):
-            if i < n_train:
-                mapping[int(pid)] = SPLIT_TRAIN
-            elif i < n_train + n_val:
-                mapping[int(pid)] = SPLIT_VAL
-            else:
-                mapping[int(pid)] = SPLIT_TEST
-        return mapping
 
     def _rollback_to(self, size: int) -> None:
         self.X = self.X[:size]
@@ -204,12 +170,11 @@ class Generator:
         self.y_n_res = self.y_n_res[:size]
         self.y_unitarity = self.y_unitarity[:size]
         self.physics_id = self.physics_id[:size]
-        self.split = self.split[:size]
         self.masses = self.masses[:size]
         self.couplings = self.couplings[:size]
         self.widths = self.widths[:size]
 
-    def _emit_physics(self, phys: PhysicsConfig, split_id: int) -> bool:
+    def _emit_physics(self, phys: PhysicsConfig) -> bool:
         """Emit K-matrix + Breit-Wigner for one physics config."""
         expected = 2
         start = len(self.X)
@@ -217,8 +182,8 @@ class Generator:
         t_k = generate_kmatrix(self.s, phys.poles)
         t_bw = generate_breit_wigner(self.s, phys.resonances)
 
-        ok = self._append_sample(t_k, CLASS_KMATRIX, 0.0, phys, split_id)
-        ok = self._append_sample(t_bw, CLASS_BW, 1.0, phys, split_id) and ok
+        ok = self._append_sample(t_k, CLASS_KMATRIX, 0.0, phys)
+        ok = self._append_sample(t_bw, CLASS_BW, 1.0, phys) and ok
 
         if not ok or (len(self.X) - start) != expected:
             self._rollback_to(start)
@@ -232,15 +197,11 @@ class Generator:
             return
 
         X = np.asarray(self.X, dtype=np.float64)
-        split = np.asarray(self.split)
-        train_mask = split == SPLIT_TRAIN
-        if not np.any(train_mask):
-            train_mask = np.ones(len(X), dtype=bool)
 
         if mode == "rms":
-            scale = float(np.sqrt(np.mean(X[train_mask] ** 2)))
+            scale = float(np.sqrt(np.mean(X ** 2)))
         elif mode == "max_abs":
-            scale = float(np.max(np.abs(X[train_mask])))
+            scale = float(np.max(np.abs(X)))
         else:
             raise ValueError(f"Unknown normalization: {mode}")
 
@@ -254,7 +215,6 @@ class Generator:
         y_class = np.asarray(self.y_class)
         y_unitarity = np.asarray(self.y_unitarity)
         y_n_res = np.asarray(self.y_n_res)
-        split = np.asarray(self.split)
         physics_id = np.asarray(self.physics_id)
 
         report: dict = {
@@ -265,7 +225,6 @@ class Generator:
             "norm_scale": float(self.norm_scale),
             "normalization": str(self.config.get("normalization", "none")),
             "class_counts": {},
-            "split_counts": {},
             "n_res_counts": {},
             "unitarity_by_class": {},
             "checks": {},
@@ -279,9 +238,6 @@ class Generator:
                     "mean": float(np.mean(y_unitarity[mask])),
                     "median": float(np.median(y_unitarity[mask])),
                 }
-
-        for s_id, s_name in enumerate(SPLIT_NAMES):
-            report["split_counts"][s_name] = int(np.sum(split == s_id))
 
         for n in np.unique(y_n_res):
             report["n_res_counts"][str(int(n))] = int(np.sum(y_n_res == n))
@@ -304,15 +260,13 @@ class Generator:
         self.rho = get_phase_space(self.s_th, self.s)
 
         n_physics = int(self.config.get("n_physics", self.config.get("n_samples_per_class", 400)))
-        self._physics_split = self._assign_physics_splits(n_physics)
 
         max_retries = int(self.config.get("max_physics_retries", 20))
         emitted_physics = 0
         attempt = 0
         while emitted_physics < n_physics and attempt < n_physics * max_retries:
             phys = self._sample_physics(emitted_physics)
-            split_id = self._physics_split[emitted_physics]
-            if self._emit_physics(phys, split_id):
+            if self._emit_physics(phys):
                 emitted_physics += 1
             attempt += 1
 
@@ -336,7 +290,6 @@ class Generator:
         self.y_n_res = [self.y_n_res[i] for i in order]
         self.y_unitarity = [self.y_unitarity[i] for i in order]
         self.physics_id = [self.physics_id[i] for i in order]
-        self.split = [self.split[i] for i in order]
         self.masses = [self.masses[i] for i in order]
         self.couplings = [self.couplings[i] for i in order]
         self.widths = [self.widths[i] for i in order]
@@ -348,7 +301,6 @@ class Generator:
             f"dim={r['feature_dim']} | norm_scale={r['norm_scale']:.4g}"
         )
         print(f"Klasy: {r['class_counts']}")
-        print(f"Split: {r['split_counts']}")
         print(f"Checks: {r['checks']}")
 
     def save(self, output_path: str | Path | None = None) -> Path:
@@ -377,7 +329,6 @@ class Generator:
             y_n_res=np.asarray(self.y_n_res, dtype=np.int32),
             y_unitarity=np.asarray(self.y_unitarity, dtype=np.float32),
             physics_id=np.asarray(self.physics_id, dtype=np.int32),
-            split=np.asarray(self.split, dtype=np.int32),
             masses=masses.astype(np.float32),
             couplings=couplings.astype(np.float32),
             widths=widths.astype(np.float32),
@@ -387,7 +338,6 @@ class Generator:
             s_th=np.asarray([self.s_th], dtype=np.float64),
             norm_scale=np.asarray([self.norm_scale], dtype=np.float64),
             class_names=np.asarray(self.classes_names),
-            split_names=np.asarray(SPLIT_NAMES),
         )
         print(f"Zapisano dataset: {output_path}")
         return output_path
@@ -416,9 +366,22 @@ class Generator:
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        X = np.asarray(self.X)
         y_class = np.asarray(self.y_class)
         y_unitarity = np.asarray(self.y_unitarity)
 
+        for class_id, name, label in [(0, "unitarne", "K-matrix"), (1, "nieunitarne", "Breit-Wigner")]:
+            mask = y_class == class_id
+            X_sub = X[mask]
+            plot_pca(
+                X_sub,
+                np.zeros(len(X_sub), dtype=int),
+                output_dir / f"pca_{name}.png",
+                title=f"PCA — amplitudy {name}",
+                class_names=[label],
+                n_components=3,
+            )
+       
         fig = plt.figure(figsize=(18, 4))
         ax_re = fig.add_subplot(141)
         ax_im = fig.add_subplot(142)
