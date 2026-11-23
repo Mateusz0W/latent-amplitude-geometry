@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from models.linear_classifier import LinearClassifier
 from training.early_stopping import EarlyStopping
 from analysis.latent import encode_mu
-from utils.utils import load_config, load_vae, resolve_path
+from utils.utils import load_config, load_vae, resolve_path, split_by_physics_id, SPLIT_TRAIN, SPLIT_VAL, SPLIT_TEST
 
 def make_loader(z, y, mask, batch_size, shuffle):
     ds = TensorDataset(
@@ -46,7 +46,8 @@ def main() -> None:
     args = parser.parse_args()
     yaml_path = Path(args.config)
 
-    config = load_config(yaml_path)["linear_probing"]
+    full_config = load_config(yaml_path)
+    config = full_config["linear_probing"]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data = np.load(resolve_path("data/amplitudes.npz"))
@@ -54,13 +55,12 @@ def main() -> None:
     vae = load_vae(config["checkpoint"])
     z = encode_mu(vae, X)                 
     y = np.asarray(data["y_class"], dtype=np.float32).reshape(-1, 1)
-    split = np.asarray(data["split"])   
-
+    split = split_by_physics_id(data["physics_id"], full_config["split"], full_config["seed"])
 
     batch_size = config["batch_size"]
-    train_loader = make_loader(z, y, split == 0, batch_size, shuffle=True)
-    val_loader   = make_loader(z, y, split == 1, batch_size, shuffle=False)
-    test_loader  = make_loader(z, y, split == 2, batch_size, shuffle=False)
+    train_loader = make_loader(z, y, split == SPLIT_TRAIN, batch_size, shuffle=True)
+    val_loader   = make_loader(z, y, split == SPLIT_VAL, batch_size, shuffle=False)
+    test_loader  = make_loader(z, y, split == SPLIT_TEST, batch_size, shuffle=False)
 
     model = LinearClassifier(z.shape[1]).to(device)
     early_stopping = EarlyStopping(patience=config["patience"])

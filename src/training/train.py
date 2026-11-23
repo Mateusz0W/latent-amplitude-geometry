@@ -2,34 +2,13 @@ from pathlib import Path
 import argparse
 
 import numpy as np
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 import torch
 import torch.optim as optim
 
 from models.vae import VAE
 from training.early_stopping import EarlyStopping
-from utils.utils import resolve_path, load_config
-
-def split_data(data: np.ndarray, batch_size: int=32, train_size: int=0.7, test_size: int=0.15) -> tuple[DataLoader, DataLoader, DataLoader]:
-    if (train_size + test_size) >= 1:
-        raise ValueError("The size of the sets cannot exceed 1")
-    if any(x < 0 for x in [train_size, test_size]):
-        raise ValueError("The sizes of the sets must be positive")
-
-    train_len = int(len(data) * train_size)
-    test_len = int(len(data) * test_size)
-    val_len = len(data) - train_len - test_len
-
-    train_dataset, val_dataset, test_dataset = random_split(
-        data,
-        [train_len, val_len, test_len]
-    )
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-
-    return train_loader, val_loader, test_loader
+from utils.utils import resolve_path, load_config, split_by_physics_id, SPLIT_TRAIN, SPLIT_VAL
 
 def validate_model(model, val_loader, device):
     model.eval()
@@ -75,8 +54,11 @@ def main() -> None:
     y_class = np.asarray(data["y_class"])
     s_grid = np.asarray(data["s_grid"])
 
-    config = load_config(yaml_path)["vae"]
-    train_loader, val_loader, test_loader = split_data(X, batch_size=config["batch_size"], train_size=config["train_size"], test_size=config["test_size"])
+    full_config = load_config(yaml_path)
+    config = full_config["vae"]
+    split = split_by_physics_id(data["physics_id"], full_config["split"], full_config["seed"])
+    train_loader = DataLoader(torch.from_numpy(X[split == SPLIT_TRAIN]), batch_size=config["batch_size"], shuffle=True)
+    val_loader = DataLoader(torch.from_numpy(X[split == SPLIT_VAL]), batch_size=config["batch_size"], shuffle=False)
 
     model = VAE(
         input_dim=X.shape[1],
