@@ -17,7 +17,7 @@ dependencies = [
     "torch",
     "scikit-learn",
     "umap-learn",
-    "ot"
+    "POT"
 ]
 
 [project.optional-dependencies]
