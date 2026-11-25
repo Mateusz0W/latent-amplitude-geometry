@@ -6,6 +6,7 @@ import numpy as np
 
 from analysis.latent import (
     CLASS_NAMES,
+    KMATRIX_CLASS,
     encode_mu,
     kmatrix_neighbor_distance,
     plot_kmatrix_distance,
@@ -13,7 +14,7 @@ from analysis.latent import (
     plot_umap,
     plot_tsne,
     calculate_latent_class_distributions,
-    plot_metric_histograms
+    plot_metric_histograms,
 )
 
 from utils.utils import (
@@ -69,6 +70,14 @@ def run(checkpoint: str | Path, data_path: str | Path) -> None:
     vae_dir.mkdir(parents=True, exist_ok=True)
     latent_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ckpt_path, vae_dir / "best_vae.pt")
+
+    y_test = y_class[split == SPLIT_TEST]
+    header = " ".join(f"z{i}" for i in range(mu.shape[1]))
+
+    np.savetxt(latent_dir / "latent_unitary.txt", mu[y_test == KMATRIX_CLASS],
+            fmt="%.6f", header=header, comments="")
+    np.savetxt(latent_dir / "latent_nonunitary.txt", mu[y_test != KMATRIX_CLASS],
+            fmt="%.6f", header=header, comments="")
 
     plot_reconstructions(model, X, s_grid, y_class, vae_dir / "reconstructions.png")
     
